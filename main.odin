@@ -85,34 +85,32 @@ init_heap :: proc(mode: Search_Mode) {
 }
 
 split :: proc(block: ^Block, size: uint) -> ^Block {
-	new_base := mem.ptr_offset(block.data, block.size - size)
+	new_base := mem.ptr_offset(block.data, block.size - alloc_size(size))
 	new_block := get_header(new_base)
 	new_block.size = size
 	new_block.used = true
 	new_block.next = block.next
 	new_block.data = new_base
-	block.next = new_block
-	block.size -= size
 
 	return new_block
 }
 
 can_split :: proc(block: ^Block, size: uint) -> (ok: bool) {
-	return block.size % size == 0
+	return (block.size - size) > 0 && (block.size - size) % 2 == 0
 }
 
 list_allocate :: proc(block: ^Block, size: uint) -> (new_block: ^Block) {
 	new_block = block
+	if new_block == nil {return}
 
-	fmt.println("LIST ALLOCATE")
-	if (can_split(block, size)) {
+	size_with_header := alloc_size(size)
+	if (can_split(block, size_with_header)) {
 		new_block = split(block, size)
+		block.next = new_block
+		block.size -= size_with_header
+		fmt.println(new_block, block)
 	}
 
-	new_block.used = true
-	new_block.size = size
-
-	fmt.println("ALLOCATING BLOCK")
 	return
 }
 
@@ -143,10 +141,10 @@ next_fit :: proc(size: uint) -> ^Block {
 		// O(n) search.
 		if block.used || block.size < size {
 			block = block.next
-			search_start = block
 			continue
 		}
 
+		search_start = block
 		return block // Found the block
 	}
 
@@ -154,36 +152,41 @@ next_fit :: proc(size: uint) -> ^Block {
 }
 
 best_fit :: proc(size: uint) -> ^Block {
-	if search_start == nil {
-		search_start = heap_start
-	}
-
-	fmt.println("SEARCHING")
-	best_fit : ^Block
-	block := search_start
+	best_fit :^Block
+	block := heap_start
+	fmt.println("TARGET:", size)
+	fmt.println("SEARCHING BEST FIT...")
 	for block != nil {
 		fmt.println("CHECKING", block)
 		if block.used || block.size < 0 {
-			block = block.next 
+			fmt.println("USED OR SMALL BLOCK")
+			fmt.println("NEXT BLOCK")
+			block = block.next
 			continue
 		}
 
 		if block.size == size {
+			fmt.println("FOUND PERFECT BLOCK")
 			search_start = block
+			block.used = true
 			return block
 		}
-		fmt.println("NOT PERFECT MATCH")
 
-		best_fit = block.size > best_fit.size ? best_fit : block
-		block = block.next 
-
-		fmt.println("NEW BEST FIT")
-		if search_start == block {
-			fmt.println("SPLITING BEST_FIT", best_fit)
-			return list_allocate(best_fit, size)
+		if best_fit == nil {
+			best_fit = block
+		} else {
+			fmt.println("ASSIGNNING BEST FIT")
+			best_fit = best_fit.size > block.size ? block : best_fit
 		}
+
+		fmt.println("NEXT BLOCK")
+		block = block.next
 	}
-	fmt.println("NO BLOCK FOUND")
+
+	if best_fit != nil {
+		fmt.println("SPLITTING BEST FIT")
+		return list_allocate(best_fit, size)
+	}
 
 	return nil
 }
@@ -228,7 +231,7 @@ alloc :: proc(size: uint) -> (data: word, err: mem.Allocator_Error) {
 
 	top = block
 
-	fmt.println("NEW BLOCK ASSIGNED")
+	fmt.println("NEW BLOCK ASSIGNED", block)
 	return block.data, nil
 }
 
@@ -243,15 +246,12 @@ free :: proc(data: word) {
 }
 
 main :: proc() {
-	fmt.println("Initiating heap")
 	init_heap(.Best_Fit)
 	alloc(8)
 	block1, _ := alloc(64)
 	alloc(8)
 	block2, _ := alloc(16)
 
-	fmt.println("FIRST-1", get_header(block1))
-	fmt.println("SECOND-1", get_header(block2))
 	assert(get_header(block1).size == 64, "Block should be same size as requested")
 	assert(get_header(block2).size == 16, "Block should be same size as requested")
 
@@ -259,11 +259,8 @@ main :: proc() {
 	free(block1)
 
 	block3, _ := alloc(16)
-	fmt.println("FIRST-2", get_header(block1))
-	fmt.println("SECOND-2", get_header(block2))
-	fmt.println("THIRD", get_header(block3))
 	assert(get_header(block3) == get_header(block2), "Both blocks should point to the same place")
 
 	block3, _ = alloc(16)
-	assert(get_header(block3) == get_header(block1), "Both blocks should point to the same place")
+	assert(get_header(block1).next == get_header(block3), "Both blocks should point to the same place")
 }
